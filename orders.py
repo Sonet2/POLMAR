@@ -47,6 +47,15 @@ class Order:
         from datetime import datetime
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return created_at
+    def get_order_items(self, order_id):
+        return self.connection.execute("""
+            SELECT m.category, i.m3_quantity, i.length, i.dimensions,
+                i.line_total_grosze
+            FROM order_items AS i
+            JOIN materials AS m ON m.id = i.material_id
+            WHERE i.order_id = ?
+            ORDER BY i.id
+        """, (order_id,)).fetchall()
   
     def create_orders(self, customer_id, delivery_location_id, order_type, status, created_at, delivery_date, fuel_cost_grosze, fuel_consumption):
         
@@ -60,6 +69,43 @@ class Order:
         INSERT INTO order_items (order_id, material_id, m3_quantity, length, dimensions, price_per_m3_grosze, line_total_grosze)
         VALUES(?,?,?,?,?,?,0)""", (order_id, material_id, m3_quantity, length, dimensions, price_per_m3_grosze))
         return result
+   
+    def display_orders(self, search_term):
+        pattern = f"%{search_term}%"
+        results = self.connection.execute("""
+        SELECT o.id,
+        CASE
+            WHEN c.customer_type = 'COMPANY' THEN c.company_name
+            ELSE c.first_name || ' ' || c.last_name
+        END AS customer_name,
+        d.address AS delivery_address,
+        o.order_type, o.status, o.created_at, o.delivery_date,
+        o.fuel_cost_grosze, o.fuel_consumption
+        FROM orders AS o
+        JOIN customers AS c ON c.id = o.customer_id
+        JOIN delivery_locations AS d ON d.id = o.delivery_location_id
+        WHERE c.first_name LIKE ? OR c.last_name LIKE ? OR c.company_name LIKE ?
+        """, (pattern, pattern, pattern)).fetchall()
+        orders = []
+        for order in results:
+            description = f"Id zamówienia: {order[0]}, Klient: {order[1]}, Miejsce dostawy: {order[2]}, Typ zamówienia: {order[3]}, Status: {order[4]}, Data utworzenia: {order[5]}, Data dostawy: {order[6]}, Koszt paliwa (grosze): {order[7]}, Zużycie paliwa (l): {order[8]}"
+            print(description)
+            for category, quantity, length, dimensions, total in self.get_order_items(order[0]):
+                print(f"  - {category}, {quantity} m³, dł. {length} m, "
+                    f"wymiary {dimensions}, razem {total / 100:.2f} zł")
+            orders.append((order[0], description))
+
+        return orders
+
+    def delete_orders(self, order_id):
+        result = self.connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        self.connection.commit()
+        if result.rowcount > 0:
+            return True
+        else:
+            return False
+        
+
 
 
 class OrderManager:
@@ -201,3 +247,25 @@ class OrderManager:
         except Exception:
             self.order.connection.rollback()
             raise
+
+    def display_order(self, search_term=None):
+        if search_term is None:
+            search_term = input("Wpisz imię, nazwisko lub nazwę firmy: ").strip()
+
+        return self.order.display_orders(search_term)
+
+    def delete_order(self):
+        results = self.display_order()
+        if not results:
+            print("Brak zamówień do usunięcia.")
+            return
+        
+        id_to_delete = self.validator.get_valid_number("Wprowadź ID ZAMÓWNIENIA do usunięcia: ", int, 1)
+        if not any(id_to_delete == order[0] for order in results):
+            print("Nieprawidłowy ID zamówienia.")
+            return
+           
+        if self.order.delete_orders(id_to_delete):
+            print(f"Zamówienie o ID {id_to_delete} zostało usunięte.")
+        else:
+            print(f"Nie znaleziono zamówienia o ID {id_to_delete}.")
