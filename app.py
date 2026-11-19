@@ -1,11 +1,10 @@
 from warehouse_management import WarehouseManager, Warehouse
 from wood_catalog import WoodCatalog
-from validators import Validator
+from validators import OperationCancelled, Validator
 from database import Database
 from orders import Order, OrderManager
 from fuel import Fuel
 from customer_delivery import Customers, CustomerManager,DeliveryLocations, DeliveryLocationManager
-from validators import Validator
 from blueprints import Blueprints
 from truss_manager import TrussManager
 
@@ -27,6 +26,12 @@ class Menu:
         print("3. Obsługa klientów i lokalizacji dostaw")
         output = input("Wprowadź numer opcji: ")
         return output
+
+    def run_action(self,action, cancel_message):
+        try:
+            action()
+        except OperationCancelled:
+            print(cancel_message)
     
     def get_user_choice(self, output):
         if output == "1":
@@ -52,9 +57,9 @@ class Menu:
             warehouse_choice = input("Wprowadź numer opcji: ")
             
             if warehouse_choice == "1":
-                self.warehouse_manager.add_to_warehouse()
+                self.run_action(self.warehouse_manager.add_to_warehouse, "Anulowano dodawanie materiału do magazynu.")
             elif warehouse_choice == "2":
-                self.warehouse_manager.delete_from_warehouse()
+                self.run_action(self.warehouse_manager.delete_from_warehouse, "Anulowano usuwanie materiału z magazynu.")
             elif warehouse_choice == "3":
                 self.warehouse.display_warehouse()
             elif warehouse_choice == "0":
@@ -70,31 +75,16 @@ class Menu:
             print("1. Utwórz nowe zamówienie")
             print("2. Wyświetl zamówienia")
             print("3. Usuń zamówienie")
+            print("4. Zmień status zamówienia")
             order_choice = input("Wprowadź numer opcji: ")
             if order_choice == "1":
-                self.order_manager.create_order()
+                self.run_action(self.order_manager.create_order, "Anulowano tworzenie zamówienia.")
             elif order_choice == "2":
-                while True:
-                    print("1. Wyświetl wszystkie zamówienia")
-                    print("2. Wyświetl zamowienia dla klienta indywidualnego")
-                    print("3. Wyświetl zamowienia dla klienta biznesowego")
-                    print("4. Usuń zamówienie")
-                    print("0. Powrót do menu głównego")
-                    sub_choice = input("Wprowadź numer opcji: ")
-                    if sub_choice == "1":
-                        self.order_manager.display_order(search_term="")
-                    elif sub_choice == "2":
-                        self.order_manager.display_order()
-                    elif sub_choice == "3":
-                        self.order_manager.display_order()
-                    elif sub_choice == "4":
-                        self.order_manager.delete_order()
-                    elif sub_choice == "0":
-                        return
-                    else:
-                        print("Nieprawidłowa opcja. Spróbuj ponownie.")
+                self.run_action(self.order_manager.display_order, "Anulowano wyświetlanie zamówień.")
             elif order_choice == "3":
-                self.order_manager.delete_order()
+                self.run_action(self.order_manager.delete_order, "Anulowano usuwanie zamówienia.")
+            elif order_choice == "4":
+                self.run_action(self.order_manager.change_order_status, "Anulowano zmianę statusu zamówienia.")
             elif order_choice == "0":
                 break
             else:
@@ -112,17 +102,17 @@ class Menu:
             print("6. Usuń miejsce dostawy")
             customer_choice = input("Wprowadź numer opcji: ")
             if customer_choice == "1":
-                self.customer_manager.add_customer()
+                self.run_action(self.customer_manager.add_customer, "Anulowano dodawanie klienta.")
             elif customer_choice == "2":
-                self.customer_manager.display_customers()
+                self.run_action(self.customer_manager.display_customers, "Anulowano wyświetlanie klientów.")
             elif customer_choice == "3":
-                self.customer_manager.delete_customer()
+                self.run_action(self.customer_manager.delete_customer, "Anulowano usuwanie klienta.")
             elif customer_choice == "4":
-                self.delivery_locations_manager.add_delivery_location()
+                self.run_action(self.delivery_locations_manager.add_delivery_location, "Anulowano dodawanie miejsca dostawy.")
             elif customer_choice == "5":
-                self.delivery_locations_manager.display_delivery_locations()
+                self.run_action(self.delivery_locations_manager.display_delivery_locations, "Anulowano wyświetlanie miejsc dostawy.")
             elif customer_choice == "6":
-                self.delivery_locations_manager.delete_delivery_location()
+                self.run_action(self.delivery_locations_manager.delete_delivery_location, "Anulowano usuwanie miejsca dostawy.")
             elif customer_choice == "0":
                 break
             else:

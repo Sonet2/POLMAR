@@ -80,15 +80,15 @@ class Order:
         END AS customer_name,
         d.address AS delivery_address,
         o.order_type, o.status, o.created_at, o.delivery_date,
-        o.fuel_cost_grosze, o.fuel_consumption
+        COALESCE(o.fuel_cost_grosze, 0), o.fuel_consumption, o.total_order_price_grosze
         FROM orders AS o
         JOIN customers AS c ON c.id = o.customer_id
         JOIN delivery_locations AS d ON d.id = o.delivery_location_id
-        WHERE c.first_name LIKE ? OR c.last_name LIKE ? OR c.company_name LIKE ?
-        """, (pattern, pattern, pattern)).fetchall()
+        WHERE (c.first_name || ' ' || c.last_name) LIKE ? OR c.company_name LIKE ?
+        """, (pattern, pattern)).fetchall()
         orders = []
         for order in results:
-            description = f"Id zamówienia: {order[0]}, Klient: {order[1]}, Miejsce dostawy: {order[2]}, Typ zamówienia: {order[3]}, Status: {order[4]}, Data utworzenia: {order[5]}, Data dostawy: {order[6]}, Koszt paliwa (grosze): {order[7]}, Zużycie paliwa (l): {order[8]}"
+            description = f"Id zamówienia: {order[0]}, Klient: {order[1]}, Miejsce dostawy: {order[2]}, Typ zamówienia: {order[3]}, Status: {order[4]}, Data utworzenia: {order[5]}, Data dostawy: {order[6]}, Koszt paliwa: {order[7] / 100:.2f} zł, Zużycie paliwa (l): {order[8]}, Do zapłaty: {order[9] / 100:.2f} zł"
             print(description)
             for category, quantity, length, dimensions, total in self.get_order_items(order[0]):
                 print(f"  - {category}, {quantity} m³, dł. {length} m, "
@@ -99,6 +99,14 @@ class Order:
 
     def delete_orders(self, order_id):
         result = self.connection.execute("DELETE FROM orders WHERE id = ?", (order_id,))
+        self.connection.commit()
+        if result.rowcount > 0:
+            return True
+        else:
+            return False
+
+    def change_orders_status(self,order_id, new_status):
+        result = self.connection.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
         self.connection.commit()
         if result.rowcount > 0:
             return True
@@ -181,8 +189,8 @@ class OrderManager:
             customer_id = self.customer_manager.add_customer()
 
             if customer_id is None:
-                print("Nie udało się dodać klienta.")
                 return
+            
         elif not any(customer_id == customer[0] for customer in customer_ids_list):
             print("Nieprawidłowy ID klienta.")
             return
@@ -205,7 +213,6 @@ class OrderManager:
                 delivery_location_id = self.delivery_location_manager.add_delivery_location(customer_id)
     
                 if delivery_location_id is None:
-                    print("Nie udało się dodać miejsca dostawy.")
                     return
             elif not any(delivery_location_id == location[0] for location in delivery_locations):
                 print("Nieprawidłowy ID miejsca dostawy.")
@@ -248,11 +255,14 @@ class OrderManager:
             self.order.connection.rollback()
             raise
 
-    def display_order(self, search_term=None):
-        if search_term is None:
-            search_term = input("Wpisz imię, nazwisko lub nazwę firmy: ").strip()
+    def display_order(self):
+        search_term = self.validator.read_input(
+            "Wpisz imię, nazwisko lub nazwę firmy (Enter wyświetla wszystkie zamówienia): ").strip()
+        res= self.order.display_orders(search_term)
+        if not res:
+            print("Brak zamówień do wyświetlenia.")
+        return res
 
-        return self.order.display_orders(search_term)
 
     def delete_order(self):
         results = self.display_order()
@@ -269,3 +279,21 @@ class OrderManager:
             print(f"Zamówienie o ID {id_to_delete} zostało usunięte.")
         else:
             print(f"Nie znaleziono zamówienia o ID {id_to_delete}.")
+
+    def change_order_status(self):
+        results = self.display_order()
+        if not results:
+            print("Brak zamówień do zmiany statusu.")
+            return
+        
+        id_to_change = self.validator.get_valid_number("Wprowadź ID ZAMÓWNIENIA do zmiany statusu: ", int, 1)
+        if not any(id_to_change == order[0] for order in results):
+            print("Nieprawidłowy ID zamówienia.")
+            return
+        
+        new_status = self.validator.select_option_from_list(["IN_PROGRESS", "COMPLETED", "CANCELLED"], "Wybierz nowy status zamówienia: ")
+        
+        if self.order.change_orders_status(id_to_change, new_status):
+            print(f"Status zamówienia o ID {id_to_change} został zmieniony na {new_status}.")
+        else:
+            print(f"Nie znaleziono zamówienia o ID {id_to_change}.")

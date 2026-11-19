@@ -32,10 +32,10 @@ class Blueprints:
 
         m3_quantity = self.validator.get_valid_number("Podaj ilość w m3: ", float, 0.01)
         length = self.validator.get_valid_number("Podaj długość w metrach: ", float, 0.01)
-        dimensions = input("Podaj wymiary (np. 10x20): ").strip()
+        dimensions = self.validator.read_input("Podaj wymiary (np. 10x20): ").strip()
         while not dimensions:
             print("Wymiary nie mogą być puste.")
-            dimensions = input("Podaj wymiary (np. 10x20): ").strip()
+            dimensions = self.validator.read_input("Podaj wymiary (np. 10x20): ").strip()
 
         return selected_category, selected_subcategory, selected_specie, wood_price, m3_quantity, length, dimensions
 

@@ -74,6 +74,9 @@ class Warehouse:
                 f"Ilość m3: {entry[4]}, Wymiary sztuki: {entry[5]}, "
                 f"Długość: {entry[6]}"
             )
+        if not results:
+            print("Brak materiałów w magazynie.")
+        return results
 
 class WarehouseManager:
     def __init__(self, catalog, validator, warehouse):
@@ -102,10 +105,10 @@ class WarehouseManager:
             
         m3 = self.validator.get_valid_number("Wprowadź ilość w m3: ", float, 0.0001)
 
-        dimensions = input("Wprowadź wymiary sztuki: ").strip()        
+        dimensions = self.validator.read_input("Wprowadź wymiary sztuki: ").strip()        
         while not dimensions:            
             print("Wymiary sztuki nie mogą być puste.")            
-            dimensions = input("Wprowadź wymiary sztuki: ").strip()
+            dimensions = self.validator.read_input("Wprowadź wymiary sztuki: ").strip()
 
         length = self.validator.get_valid_number("Wprowadź długość drewna: ", float, 0.0001)
 
@@ -113,7 +116,9 @@ class WarehouseManager:
     
 
     def delete_from_warehouse(self):
-        self.warehouse.display_warehouse()
+        results = self.warehouse.display_warehouse()
+        if not results:
+            return
             
         id_to_delete = self.validator.get_valid_number("Wprowadź ID materiału do usunięcia: ", int, 1)
         

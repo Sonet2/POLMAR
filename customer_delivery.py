@@ -18,9 +18,11 @@ class Customers:
             else:
                 raise ValueError("Niepoprawny typ klienta. Wybierz 'PERSON' lub 'COMPANY'.")
             self.connection.commit()
-        except sqlite3.IntegrityError:
+        except sqlite3.IntegrityError as error:
             self.connection.rollback()
-            raise Exception(f"Podany NIP {nip} już istnieje w bazie danych. Nie można dodać klienta.")
+            if error.sqlite_errorcode == sqlite3.SQLITE_CONSTRAINT_UNIQUE:
+                return None
+            raise
         
         
         if result.rowcount > 0:
@@ -28,26 +30,43 @@ class Customers:
         else:
              raise Exception("Nie udało się dodać klienta do bazy danych")
     def delete_customers(self, id_to_delete: int):
-        result = self.connection.execute("DELETE FROM customers WHERE id = ?", (id_to_delete,))
-        self.connection.commit()
+        with self.connection:
+            result = self.connection.execute("DELETE FROM customers WHERE id = ?", (id_to_delete,))
+        return result.rowcount > 0
 
-        if result.rowcount > 0:
-            return True
-        return False
-    def get_customers(self):
-        result = self.connection.execute("SELECT * FROM customers").fetchall()
-        results = []
-        for entry in result:
-            results.append(entry)
-        return results
+    def get_customers(self, search_term=None):
+        search_term = (search_term or "").strip()
+        pattern = f"%{search_term}%"
+        return self.connection.execute("""
+            SELECT id, customer_type, first_name, last_name, company_name, nip, phone, email
+            FROM customers
+            WHERE (COALESCE(first_name, '') || ' ' || COALESCE(last_name, '')) LIKE ?
+               OR company_name LIKE ?
+               OR nip LIKE ?
+        """, (pattern, pattern, pattern)).fetchall()
 
-    def display_customers(self):
-        results = self.get_customers()  
-        for entry in results:
-            if entry[1] == "PERSON":
-                print(f"ID: {entry[0]}, Typ klienta: {entry[1]}, Imię: {entry[2]}, Nazwisko: {entry[3]}, Telefon: {entry[6]}, Email: {entry[7]}")
-            elif entry[1] == "COMPANY":
-                print(f"ID: {entry[0]}, Typ klienta: {entry[1]}, Nazwa firmy: {entry[4]}, NIP: {entry[5]}, Telefon: {entry[6]}, Email: {entry[7]}")
+    def display_customers(self, search_term=None):
+        results = self.get_customers(search_term)
+        customers = []
+        for customer in results:
+            if customer[1] == "PERSON":
+                description = (
+                    f"ID: {customer[0]}, Typ klienta: {customer[1]}, "
+                    f"Imię: {customer[2]}, Nazwisko: {customer[3]}"
+                )
+            elif customer[1] == "COMPANY":
+                description = (
+                    f"ID: {customer[0]}, Typ klienta: {customer[1]}, "
+                    f"Nazwa firmy: {customer[4]}, NIP: {customer[5]}"
+                )
+            else:
+                continue
+            description += f", Telefon: {customer[6]}, Email: {customer[7]}"
+            print(description)
+            customers.append((customer[0], description))
+
+        return customers
+
 
 class CustomerManager:
     def __init__(self, validator, customers):
@@ -59,35 +78,65 @@ class CustomerManager:
         
 
         if customer_type == "PERSON":
-            first_name = input("Podaj imię klienta: ").strip()
-            last_name = input("Podaj nazwisko klienta: ").strip()
+            first_name = self.validator.read_input("Podaj imię klienta: ").strip()
+            last_name = self.validator.read_input("Podaj nazwisko klienta: ").strip()
             while not first_name or not last_name:
                 print("Imię i nazwisko nie mogą być puste. Spróbuj ponownie.")
-                first_name = input("Podaj imię klienta: ").strip()
-                last_name = input("Podaj nazwisko klienta: ").strip()
+                first_name = self.validator.read_input("Podaj imię klienta: ").strip()
+                last_name = self.validator.read_input("Podaj nazwisko klienta: ").strip()
             
-            phone = input("Podaj numer telefonu klienta: ")
-            email = input("Podaj adres email klienta: ")
+            phone = self.validator.read_input("Podaj numer telefonu klienta: ")
+            email = self.validator.read_input("Podaj adres email klienta: ")
             customer_id = self.customers.add_customers(customer_type, first_name, last_name, None, None, phone, email)
             
         elif customer_type == "COMPANY":
-            company_name = input("Podaj nazwę firmy: ").strip()
-            nip = input("Podaj NIP firmy: ").strip()
+            company_name = self.validator.read_input("Podaj nazwę firmy: ").strip()
+            nip = self.validator.read_input("Podaj NIP firmy: ").strip()
             while not company_name or not nip:
                 print("Nazwa firmy i NIP nie mogą być puste. Spróbuj ponownie.")
-                company_name = input("Podaj nazwę firmy: ").strip()
-                nip = input("Podaj NIP firmy: ").strip()
-            phone = input("Podaj numer telefonu firmy: ")
-            email = input("Podaj adres email firmy: ")
+                company_name = self.validator.read_input("Podaj nazwę firmy: ").strip()
+                nip = self.validator.read_input("Podaj NIP firmy: ").strip()
+            
+            phone = self.validator.read_input("Podaj numer telefonu firmy: ")
+            email = self.validator.read_input("Podaj adres email firmy: ")
             customer_id = self.customers.add_customers(customer_type, None, None, company_name, nip, phone, email)
 
-        print("Klient został poprawnie dodany do bazy danych")
+        if customer_id is None:
+            print("Ten NIP jest już w bazie.")
+            return None
+
+        print("Klient został poprawnie dodany do bazy danych.")
         return customer_id
             
+    def display_customers(self):
+        search_term = self.validator.read_input(
+            "Wpisz imię, nazwisko, nazwę firmy lub NIP (Enter wyświetla wszystkich): "
+        )
+        results = self.customers.display_customers(search_term)
+        if not results:
+            print("Nie znaleziono klientów.")
+        return results
+
     def delete_customer(self):
-        self.customers.display_customers()
-        id_to_delete = self.validator.get_valid_number("Podaj ID klienta do usunięcia: ", int)
-        if self.customers.delete_customers(id_to_delete):
+        results = self.display_customers()
+        if not results:
+            return
+
+        id_to_delete = self.validator.get_valid_number("Podaj ID klienta do usunięcia: ", int, 1)
+        if not any(id_to_delete == customer[0] for customer in results):
+            print("Tego klienta nie ma na liście wyników.")
+            return
+
+
+        try:
+            deleted = self.customers.delete_customers(id_to_delete)
+        except sqlite3.IntegrityError as error:
+            if error.sqlite_errorcode != sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
+                raise
+            print("Nie można usunąć klienta, ponieważ jest powiązany z zamówieniem.")
+            return
+
+        if deleted:
             print(f"Klient o ID {id_to_delete} został usunięty.")
         else:
             print(f"Nie znaleziono klienta o ID {id_to_delete}.")
@@ -111,16 +160,12 @@ class DeliveryLocations:
     def get_dist(self, address):
         distance = self.fuel.get_route_info(address)
 
-        if distance is None:
-            raise Exception(
-                "Nie udało się obliczyć odległości. "
-                "Sprawdź adres i połączenie z internetem."
-            )
-
         return distance
     
     def add_delivery_locations(self, customer_id, name, address):
         distance = self.get_dist(address)
+        if distance is None:
+            return None
         result =self.connection.execute("""
             INSERT INTO delivery_locations (customer_id, name, address, distance)
             VALUES (?, ?, ?, ?)""", (customer_id, name, address, distance))
@@ -132,31 +177,40 @@ class DeliveryLocations:
             raise Exception("Nie udało się dodać miejsca dostawy do bazy danych")
 
     def delete_delivery_locations(self, id_to_delete: int):
-        result = self.connection.execute("DELETE FROM delivery_locations WHERE id = ?", (id_to_delete,))
-        self.connection.commit()
+        with self.connection:
+            result = self.connection.execute("DELETE FROM delivery_locations WHERE id = ?", (id_to_delete,))
+        return result.rowcount > 0
 
-        if result.rowcount > 0:
-            return True
-        return False
-    def get_delivery_locations(self):
-        result = self.connection.execute("""
-                SELECT delivery_locations.id, customers.first_name, customers.last_name, customers.company_name, delivery_locations.name, delivery_locations.address
-                FROM delivery_locations INNER JOIN customers ON delivery_locations.customer_id = customers.id
-                """)
-        results = []
-        for entry in result:
-            results.append(entry)
-        return results
-    
-    def display_delivery_locations(self):
-        results = self.get_delivery_locations()
+    def get_delivery_locations(self, search_term=None):
+        search_term = (search_term or "").strip()
+        pattern = f"%{search_term}%"
+        return self.connection.execute("""
+            SELECT d.id, c.first_name, c.last_name, c.company_name, d.name, d.address
+            FROM delivery_locations AS d
+            JOIN customers AS c ON c.id = d.customer_id
+            WHERE COALESCE(d.address, '') LIKE ? OR d.name LIKE ?
+        """, (pattern, pattern)).fetchall()
 
-        for entry in results:
-            if entry[1] is not None and entry[2] is not None:
-                print(f"ID: {entry[0]}, Klient: {entry[1]} {entry[2]}, Nazwa miejsca dostawy: {entry[4]}, Adres: {entry[5]}")
-            elif entry[3] is not None:
-                print(f"ID: {entry[0]}, Klient: {entry[3]}, Nazwa miejsca dostawy: {entry[4]}, Adres: {entry[5]}")
-        
+    def display_delivery_locations(self, search_term=None):
+        results = self.get_delivery_locations(search_term)
+        locations = []
+        for location in results:
+            if location[1] is not None and location[2] is not None:
+                customer_name = f"{location[1]} {location[2]}"
+            elif location[3] is not None:
+                customer_name = location[3]
+            else:
+                continue
+            description = (
+                f"ID: {location[0]}, Klient: {customer_name}, "
+                f"Nazwa miejsca dostawy: {location[4]}, Adres: {location[5]}"
+            )
+            print(description)
+            locations.append((location[0], description))
+
+        return locations
+
+
 class DeliveryLocationManager:
     def __init__(self, validator, delivery_locations):
         self.validator = validator
@@ -175,28 +229,42 @@ class DeliveryLocationManager:
             if not any(customer_id == customer[0] for customer in customer_ids_list):
                 print("Nieprawidłowy ID klienta.")
                 return
-        name = input("Podaj nazwę miejsca dostawy: ")
-        address = input("Podaj adres miejsca dostawy: ")
+        name = self.validator.read_input("Podaj nazwę miejsca dostawy: ")
+        address = self.validator.read_input("Podaj adres miejsca dostawy: ")
         delivery_location_id = self.delivery_locations.add_delivery_locations(customer_id, name, address)
+        if delivery_location_id is None:
+            print("Nie udało się dodać miejsca dostawy. Sprawdź adres i połączenie z internetem.")
+            return None
 
         print("Miejsce dostawy zostało poprawnie dodane do bazy danych")
         return delivery_location_id
 
+    def display_delivery_locations(self):
+        search_term = self.validator.read_input("Wpisz adres lub nazwę miejsca dostawy (Enter wyświetla wszystkie): ")
+        results = self.delivery_locations.display_delivery_locations(search_term)
+        if not results:
+            print("Nie znaleziono miejsc dostawy.")
+        return results
+
     def delete_delivery_location(self):
-        self.delivery_locations.display_delivery_locations()
-                    
-        id_to_delete = self.validator.get_valid_number("Wprowadź ID miejsca dostawy do usunięcia: ", int, 1)
-        
-        if self.delivery_locations.delete_delivery_locations(id_to_delete):
+        results = self.display_delivery_locations()
+        if not results:
+            return
+
+        id_to_delete = self.validator.get_valid_number("Podaj ID miejsca dostawy do usunięcia: ", int, 1)
+        if not any(id_to_delete == location[0] for location in results):
+            print("Tego miejsca dostawy nie ma na liście wyników.")
+            return
+
+        try:
+            deleted = self.delivery_locations.delete_delivery_locations(id_to_delete)
+        except sqlite3.IntegrityError as error:
+            if error.sqlite_errorcode != sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
+                raise
+            print("Nie można usunąć miejsca dostawy, ponieważ jest powiązane z zamówieniem.")
+            return
+
+        if deleted:
             print(f"Miejsce dostawy o ID {id_to_delete} zostało usunięte.")
         else:
             print(f"Nie znaleziono miejsca dostawy o ID {id_to_delete}.")
-
-
-        
-
-
-        
-
-    
-     
