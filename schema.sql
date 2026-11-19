@@ -170,3 +170,23 @@ CREATE TABLE "customers" (
 	
 	
 );
+CREATE TRIGGER customer_id_matching
+BEFORE INSERT ON orders
+WHEN (
+    SELECT customer_id
+    FROM delivery_locations
+    WHERE id = NEW.delivery_location_id
+) <> NEW.customer_id
+BEGIN
+    SELECT RAISE(ABORT, 'Miejsce dostawy należy do innego klienta.');
+END;
+CREATE TRIGGER customer_id_matching_update
+BEFORE UPDATE OF customer_id, delivery_location_id ON orders
+WHEN (
+    SELECT customer_id
+    FROM delivery_locations
+    WHERE id = NEW.delivery_location_id
+) <> NEW.customer_id
+BEGIN
+    SELECT RAISE(ABORT, 'Miejsce dostawy należy do innego klienta.');
+END;
