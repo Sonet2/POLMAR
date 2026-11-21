@@ -1,5 +1,3 @@
-from database import Database 
-from wood_catalog import WoodCatalog
 import sqlite3
 
 class Warehouse:
@@ -12,16 +10,17 @@ class Warehouse:
         try:
             result = self.connection.execute("""
                 INSERT INTO warehouse (material_id, m3_quantity, dimensions, length)
-                VALUES (?, ?, ?, ?)""", (material_id[0], m3_quantity, dimensions, length))
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(material_id, dimensions, length)
+                DO UPDATE SET m3_quantity = warehouse.m3_quantity + excluded.m3_quantity
+                RETURNING id""", (material_id[0], m3_quantity, dimensions, length))
+            warehouse_id = result.fetchone()[0]
             self.connection.commit()
         except sqlite3.IntegrityError:
             self.connection.rollback()
             raise Exception(f"Nie można dodać materiału do magazynu. Sprawdź, czy materiał istnieje w katalogu.")
         
-        if result.rowcount > 0:
-            return result.lastrowid
-        else:
-            raise Exception("Nie udało się dodać materiału do bazy danych")
+        return warehouse_id
     
     def write_to_warehouse(self, category, subcategory, wood_specie, m3, dimensions, length):
         material_id = self.catalog.get_position_id(category, subcategory, wood_specie)
@@ -78,6 +77,14 @@ class Warehouse:
             print("Brak materiałów w magazynie.")
         return results
 
+    def is_reserved(self, warehouse_id):
+        result = self.connection.execute("""
+            SELECT COUNT(*) FROM material_reservations WHERE warehouse_id = ?
+        """, (warehouse_id,)).fetchone()
+        if result[0] > 0:
+            return True
+        return False
+
 class WarehouseManager:
     def __init__(self, catalog, validator, warehouse):
         self.catalog = catalog
@@ -121,6 +128,10 @@ class WarehouseManager:
             return
             
         id_to_delete = self.validator.get_valid_number("Wprowadź ID materiału do usunięcia: ", int, 1)
+
+        if self.warehouse.is_reserved(id_to_delete):
+            print(f"Nie można usunąć materiału o ID {id_to_delete}, ponieważ jest zarezerwowany. Najpierw zwolnij rezerwacje.")
+            return
         
         if self.warehouse.delete_material(id_to_delete):
             print(f"Materiał o ID {id_to_delete} został usunięty.")

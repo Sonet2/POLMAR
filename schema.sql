@@ -14,16 +14,6 @@ CREATE TABLE materials (
 		REFERENCES wood_species(id)
 		ON DELETE RESTRICT
 );
-CREATE TABLE warehouse (
-id INTEGER PRIMARY KEY,
-material_id  INTEGER NOT NULL,
-m3_quantity REAL NOT NULL CHECK(m3_quantity >0),
-dimensions TEXT NOT NULL,
-length REAL NOT NULL CHECK(length >0),
- 
- FOREIGN KEY (material_id)
- REFERENCES materials(id)
- ON DELETE RESTRICT);
 CREATE TABLE delivery_locations (
     id INTEGER PRIMARY KEY,
     customer_id INTEGER NOT NULL,
@@ -190,3 +180,24 @@ WHEN (
 BEGIN
     SELECT RAISE(ABORT, 'Miejsce dostawy należy do innego klienta.');
 END;
+CREATE TABLE material_reservations(
+id INTEGER NOT NULL PRIMARY KEY, 
+order_item_id INTEGER NOT NULL, 
+warehouse_id INTEGER NOT NULL,
+m3_quantity REAL NOT NULL,
+CHECK(m3_quantity > 0),
+FOREIGN KEY(order_item_id) REFERENCES order_items(id),
+FOREIGN KEY (warehouse_id) REFERENCES warehouse(id)
+);
+CREATE TABLE warehouse (
+id INTEGER PRIMARY KEY,
+material_id  INTEGER NOT NULL,
+m3_quantity REAL NOT NULL CHECK(m3_quantity >=0),
+dimensions TEXT NOT NULL,
+length REAL NOT NULL CHECK(length >0),
+ 
+ FOREIGN KEY (material_id)
+ REFERENCES materials(id)
+ ON DELETE RESTRICT);
+CREATE UNIQUE INDEX warehouse_material_dimensions_length_unique
+ON warehouse(material_id, dimensions, length);

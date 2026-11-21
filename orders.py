@@ -5,6 +5,7 @@ from datetime import datetime
 from blueprints import Blueprints
 from truss_manager import TrussManager
 from customer_delivery import CustomerManager, DeliveryLocationManager
+from material_reservation import MaterialReservation
 
 class Order:
     def __init__(self, connection, catalog, fuel):
@@ -50,10 +51,13 @@ class Order:
     def get_order_items(self, order_id):
         return self.connection.execute("""
             SELECT m.category, i.m3_quantity, i.length, i.dimensions,
-                i.line_total_grosze
+                i.line_total_grosze, 
+            COALESCE(SUM(mr.m3_quantity), 0) AS reserved_m3
             FROM order_items AS i
             JOIN materials AS m ON m.id = i.material_id
+            LEFT JOIN material_reservations AS mr ON mr.order_item_id = i.id
             WHERE i.order_id = ?
+            GROUP BY i.id
             ORDER BY i.id
         """, (order_id,)).fetchall()
   
@@ -68,7 +72,7 @@ class Order:
         result = self.connection.execute("""
         INSERT INTO order_items (order_id, material_id, m3_quantity, length, dimensions, price_per_m3_grosze, line_total_grosze)
         VALUES(?,?,?,?,?,?,0)""", (order_id, material_id, m3_quantity, length, dimensions, price_per_m3_grosze))
-        return result
+        return result.lastrowid
    
     def display_orders(self, search_term):
         pattern = f"%{search_term}%"
@@ -90,9 +94,9 @@ class Order:
         for order in results:
             description = f"Id zamówienia: {order[0]}, Klient: {order[1]}, Miejsce dostawy: {order[2]}, Typ zamówienia: {order[3]}, Status: {order[4]}, Data utworzenia: {order[5]}, Data dostawy: {order[6]}, Koszt paliwa: {order[7] / 100:.2f} zł, Zużycie paliwa (l): {order[8]}, Do zapłaty: {order[9] / 100:.2f} zł"
             print(description)
-            for category, quantity, length, dimensions, total in self.get_order_items(order[0]):
+            for category, quantity, length, dimensions, total, reserved_m3 in self.get_order_items(order[0]):
                 print(f"  - {category}, {quantity} m³, dł. {length} m, "
-                    f"wymiary {dimensions}, razem {total / 100:.2f} zł")
+                    f"wymiary {dimensions} , zarezerwowane: {reserved_m3} m³, razem {total / 100:.2f} zł")
             orders.append((order[0], description))
 
         return orders
@@ -107,17 +111,21 @@ class Order:
 
     def change_orders_status(self,order_id, new_status):
         result = self.connection.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
-        self.connection.commit()
         if result.rowcount > 0:
             return True
         else:
             return False
         
-
+    def get_order_status(self, order_id):
+        result = self.connection.execute("SELECT status FROM orders WHERE id = ?", (order_id,)).fetchone()
+        if result:
+            return result[0]
+        else:
+            return None
 
 
 class OrderManager:
-    def __init__(self, validator, order, catalog, truss_manager, blueprints, fuel, customer_manager, delivery_location_manager):
+    def __init__(self, validator, order, catalog, truss_manager, blueprints, fuel, customer_manager, delivery_location_manager, material_reservation):
         self.validator = validator
         self.order = order
         self.catalog = catalog
@@ -126,6 +134,7 @@ class OrderManager:
         self.fuel = fuel
         self.customer_manager = customer_manager
         self.delivery_location_manager = delivery_location_manager
+        self.material_reservation = material_reservation
 
     def collect_one_item(self):
         return self.blueprints.wood_selection()
@@ -218,6 +227,10 @@ class OrderManager:
                 print("Nieprawidłowy ID miejsca dostawy.")
                 return
             
+        to_reserve = []
+        enough = []
+        not_enough = []
+
         oder_types = ["Materiał luźny", "Więźba dachowa"]
         for index, order_type in enumerate(oder_types, start=1):
             print(f"{index}. {order_type}")
@@ -232,6 +245,52 @@ class OrderManager:
             print("Zamówienie anulowane.")
             return
         
+        collected_items = self.merge_items(collected_items)
+
+        for item in collected_items:
+            category, subcategory, specie, price, m3_quantity, length, dimensions = item
+            material_id = self.catalog.get_position_id(category, subcategory, specie)
+            if self.material_reservation.has_enough_stock(material_id[0], dimensions, length, m3_quantity):
+                enough.append(item)
+            else:
+                not_enough.append(item)
+
+        print("Dla następujących pozycji materiału jest wystarczająca ilość w magazynie:")
+        for item in enough:
+            category, subcategory, specie, price, m3_quantity, length, dimensions = item
+            print(f"Kategoria: {category}, Podkategoria: {subcategory}, Gatunek: {specie}, Ilość w m3: {m3_quantity}, Długość: {length}, Wymiary: {dimensions}")
+        
+        print("Nie ma wystarczającej ilości materiału w magazynie do rezerwacji dla następujących pozycji:")
+        for item in not_enough:
+            category, subcategory, specie, price, m3_quantity, length, dimensions = item
+            print(f"Kategoria: {category}, Podkategoria: {subcategory}, Gatunek: {specie}, Ilość w m3: {m3_quantity}, Długość: {length}, Wymiary: {dimensions}")
+
+        
+        while True:
+            print("Wybierz co chcesz zrobić z tymi pozycjami:")
+            print("1. Pobierz wszystkie z magazynu")
+            print("2. Pobierz tylko niektóre z magazynu")
+            print("3. Zakończ zbieranie pozycji bez pobierania materiału z magazynu")
+            choice = self.validator.get_valid_number("Wybierz opcję (1-3): ", int, 1, 3)
+            if choice == 1:
+                for item in enough:
+                    to_reserve.append(item)
+                break
+            elif choice == 2:
+                while True:
+                    self.print_items(enough)
+                    item_index = self.validator.get_valid_number("Wybierz ID pozycji do pobrania z magazynu (0 aby zakończyć): ", int, 0, len(enough))
+                    if item_index == 0:
+                        break
+                    selected_item = enough[item_index - 1]
+                    to_reserve.append(selected_item)
+                    enough.remove(selected_item)
+                    if not enough:
+                        print("Nie ma już pozycji do pobrania z magazynu.")
+                        break
+                break
+            elif choice == 3:
+                break  
         
         status = "IN_PROGRESS"
         created_at = self.order.set_created_at()
@@ -249,7 +308,10 @@ class OrderManager:
                 if not material_ids:
                     raise ValueError(f"Nie znaleziono materiału w katalogu: {category}, {subcategory}, {specie}")
                 material_id = material_ids  [0]
-                self.order.add_order_items(order_id, material_id, m3_quantity, length, dimensions, price)
+                order_item_id = self.order.add_order_items(order_id, material_id, m3_quantity, length, dimensions, price)
+                if item in to_reserve:
+                    self.material_reservation.reserve_materials(material_id, dimensions, length, m3_quantity, order_item_id)
+                    to_reserve.remove(item)
             self.order.connection.commit()
         except Exception:
             self.order.connection.rollback()
@@ -274,6 +336,10 @@ class OrderManager:
         if not any(id_to_delete == order[0] for order in results):
             print("Nieprawidłowy ID zamówienia.")
             return
+
+        if self.material_reservation.has_reservations(id_to_delete):
+            print("Nie można usunąć zamówienia, ponieważ istnieją zarezerwowane materiały w magazynie. Najpierw anuluj zamówienie, aby zwrócić materiał do magazynu.")
+            return
            
         if self.order.delete_orders(id_to_delete):
             print(f"Zamówienie o ID {id_to_delete} zostało usunięte.")
@@ -290,10 +356,38 @@ class OrderManager:
         if not any(id_to_change == order[0] for order in results):
             print("Nieprawidłowy ID zamówienia.")
             return
+
+        current_status = self.order.get_order_status(id_to_change)
+        if current_status is None:
+            print("Nie znaleziono zamówienia o podanym ID.")
+            return
+        if current_status in ("CANCELLED", "COMPLETED"):
+            print(f"Nie można zmienić statusu zamówienia o ID {id_to_change}, ponieważ jest ono już w stanie '{current_status}'.")
+            return
         
-        new_status = self.validator.select_option_from_list(["IN_PROGRESS", "COMPLETED", "CANCELLED"], "Wybierz nowy status zamówienia: ")
-        
-        if self.order.change_orders_status(id_to_change, new_status):
-            print(f"Status zamówienia o ID {id_to_change} został zmieniony na {new_status}.")
-        else:
-            print(f"Nie znaleziono zamówienia o ID {id_to_change}.")
+        new_status = self.validator.select_option_from_list([ "COMPLETED", "CANCELLED"], "Wybierz nowy status zamówienia: ")
+       
+        try:
+            changed = self.order.change_orders_status(id_to_change, new_status)
+
+            if changed:
+                if new_status in ("CANCELLED", "COMPLETED"):
+                    self.material_reservation.release_materials(id_to_change)
+
+                self.order.connection.commit()
+                print(f"Status zamówienia o ID {id_to_change} został zmieniony na {new_status}.")
+            else:
+                print(f"Nie znaleziono zamówienia o ID {id_to_change}.")
+
+        except Exception:
+            self.order.connection.rollback()
+            raise
+    def merge_items(self, items):
+        merged_items = {}
+        for item in items:
+            key = (item[0], item[1], item[2], item[5], item[6])
+            if key in merged_items:
+                merged_items[key][4] += item[4]  
+            else:
+                merged_items[key] = list(item)
+        return list(merged_items.values())

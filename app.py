@@ -7,6 +7,7 @@ from fuel import Fuel
 from customer_delivery import Customers, CustomerManager,DeliveryLocations, DeliveryLocationManager
 from blueprints import Blueprints
 from truss_manager import TrussManager
+from material_reservation import MaterialReservation
 
 
 class Menu:
@@ -123,6 +124,7 @@ if __name__ == "__main__":
     database = Database(None)
     connection = database.connect()
     fuel = Fuel()
+    material_reservation = MaterialReservation(connection)
     validator = Validator()
     catalog = WoodCatalog(connection)
     warehouse = Warehouse(connection, catalog)
@@ -134,7 +136,7 @@ if __name__ == "__main__":
     delivery_locations = DeliveryLocations(connection, fuel)
     delivery_locations_manager = DeliveryLocationManager(validator, delivery_locations)
     order = Order(connection, catalog, fuel)
-    order_manager = OrderManager(validator, order, catalog, truss_manager, blueprints, fuel, customer_manager, delivery_locations_manager)
+    order_manager = OrderManager(validator, order, catalog, truss_manager, blueprints, fuel, customer_manager, delivery_locations_manager, material_reservation)
     
 
     menu = Menu(warehouse, warehouse_manager, order_manager, customer_manager, delivery_locations_manager)
