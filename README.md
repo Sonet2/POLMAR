@@ -2,11 +2,11 @@
 
 **A Python CLI for timber orders, roof-material calculations, and delivery cost estimates.**
 
+POLMAR is a Polish-language CLI used by my family's timber business to manage customer orders and warehouse stock, and to calculate roof materials and delivery costs.
+
 Preparing a timber order involves material prices, dimensions, volumes, customer details, and transport costs. POLMAR addresses this real business problem by bringing those steps into one workflow backed by SQLite.
 
 This is my individual project. I wrote all application code myself and I am responsible for its design, implementation, debugging, and ongoing development. I use AI tools to support my learning, code reviews, and occasionally to help find bugs.
-
-The application has a Polish terminal interface.
 
 ## Features
 
